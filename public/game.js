@@ -163,11 +163,33 @@ function sendInput() {
 }
 setInterval(sendInput, 50); // input degismese bile aim guncel kalsin
 
+// ----------------- YUMUSAK GECIS (INTERPOLATION) -----------------
+// Sunucu pozisyonu saniyede ~20 kez gonderiyor ama ekran cok daha sik ciziliyor.
+// Bu yuzden dogrudan sunucu pozisyonuna zoplamak yerine, her karede hedefe
+// dogru yumusakca kayarak "cit" hissini ortadan kaldiriyoruz.
+let renderPos = {}; // id -> {x, y}
+
+function updateRenderPositions(dt) {
+  for (const id in players) {
+    const p = players[id];
+    if (!renderPos[id]) renderPos[id] = { x: p.x, y: p.y };
+    const rp = renderPos[id];
+    // dt'den bagimsiz, kare hizina gore dogru calisan yumusatma
+    const smoothing = 1 - Math.pow(0.00002, dt);
+    rp.x += (p.x - rp.x) * smoothing;
+    rp.y += (p.y - rp.y) * smoothing;
+  }
+  // ayrilan oyuncularin render pozisyonunu temizle
+  for (const id in renderPos) {
+    if (!players[id]) delete renderPos[id];
+  }
+}
+
 // ----------------- KAMERA -----------------
 function getCameraOffset() {
-  const me = players[myId];
-  if (!me) return { x: canvas.width / 2, y: canvas.height / 2 };
-  const screenPos = gridToScreen(me.x, me.y);
+  const rp = renderPos[myId];
+  if (!rp) return { x: canvas.width / 2, y: canvas.height / 2 };
+  const screenPos = gridToScreen(rp.x, rp.y);
   return {
     x: canvas.width / 2 - screenPos.x,
     y: canvas.height / 2 - screenPos.y
@@ -175,7 +197,15 @@ function getCameraOffset() {
 }
 
 // ----------------- RENDER -----------------
+let lastFrameTime = performance.now();
 function draw() {
+  const now = performance.now();
+  let dt = (now - lastFrameTime) / 1000;
+  lastFrameTime = now;
+  dt = Math.min(dt, 0.1); // sekme arka plandaysa dev sicramayi engelle
+
+  updateRenderPositions(dt);
+
   ctx.fillStyle = '#0f0f23';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -226,7 +256,10 @@ function drawTile(gx, gy, owner) {
 
 function drawEntities() {
   const entities = [];
-  Object.values(players).forEach(p => entities.push({ type: 'player', data: p, depth: p.x + p.y }));
+  Object.values(players).forEach(p => {
+    const rp = renderPos[p.id] || p;
+    entities.push({ type: 'player', data: p, depth: rp.x + rp.y });
+  });
   bullets.forEach(b => entities.push({ type: 'bullet', data: b, depth: b.x + b.y }));
   entities.sort((a, b) => a.depth - b.depth);
   entities.forEach(e => {
@@ -237,7 +270,8 @@ function drawEntities() {
 
 function drawPlayer(p) {
   if (!p.alive) return;
-  const pos = gridToScreen(p.x, p.y);
+  const rp = renderPos[p.id] || p;
+  const pos = gridToScreen(rp.x, rp.y);
   const color = teams[p.team] ? teams[p.team].color : '#fff';
 
   // golge
@@ -258,7 +292,7 @@ function drawPlayer(p) {
   // nisan yonu
   const dirX = Math.cos(p.aimAngle);
   const dirY = Math.sin(p.aimAngle);
-  const dirScreen = gridToScreen(p.x + dirX * 0.6, p.y + dirY * 0.6);
+  const dirScreen = gridToScreen(rp.x + dirX * 0.6, rp.y + dirY * 0.6);
   ctx.beginPath();
   ctx.moveTo(pos.x, pos.y - 10);
   ctx.lineTo(dirScreen.x, dirScreen.y - 10);
