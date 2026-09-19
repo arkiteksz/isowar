@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Iso Territory .io</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <div id="hud">
+    <div id="healthBar">
+      <div id="healthFill"></div>
+    </div>
+    <div id="teamInfo"></div>
+    <div id="scoreInfo"></div>
+  </div>
+
+  <div id="gameOverScreen" class="hidden">
+    <h1 id="winnerText"></h1>
+    <button id="restartBtn">Yeniden Basla</button>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>

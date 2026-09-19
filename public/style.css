@@ -1,0 +1,77 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #1a1a2e;
+  font-family: 'Segoe UI', Arial, sans-serif;
+}
+
+#game {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  cursor: crosshair;
+}
+
+#hud {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  color: #fff;
+  user-select: none;
+}
+
+#healthBar {
+  width: 200px;
+  height: 18px;
+  background: rgba(0,0,0,0.5);
+  border: 2px solid #fff;
+  border-radius: 6px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+#healthFill {
+  height: 100%;
+  width: 100%;
+  background: #22c55e;
+  transition: width 0.15s ease-out;
+}
+
+#teamInfo, #scoreInfo {
+  font-size: 14px;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+  margin-bottom: 4px;
+}
+
+#gameOverScreen {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.75);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  gap: 20px;
+}
+
+#gameOverScreen.hidden {
+  display: none;
+}
+
+#restartBtn {
+  padding: 12px 28px;
+  font-size: 16px;
+  border: none;
+  border-radius: 8px;
+  background: #3b82f6;
+  color: #fff;
+  cursor: pointer;
+}
+
+#restartBtn:hover {
+  background: #2563eb;
+}
