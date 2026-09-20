@@ -75,3 +75,57 @@ html, body {
 #restartBtn:hover {
   background: #2563eb;
 }
+
+#inventoryBar {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 10px;
+  user-select: none;
+}
+
+.slot {
+  width: 56px;
+  height: 56px;
+  border-radius: 8px;
+  background: rgba(20,20,40,0.85);
+  border: 2px solid rgba(255,255,255,0.5);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 10px;
+  text-align: center;
+  position: relative;
+  transition: transform 0.1s ease, border-color 0.1s ease;
+}
+
+.slot.empty {
+  opacity: 0.4;
+  border-style: dashed;
+}
+
+.slot.filled {
+  border-color: #facc15;
+  box-shadow: 0 0 10px rgba(250, 204, 21, 0.5);
+}
+
+.slot.used-flash {
+  transform: scale(1.15);
+}
+
+.slotLabel {
+  font-weight: bold;
+  font-size: 11px;
+}
+
+.slotKey {
+  position: absolute;
+  top: 2px;
+  left: 4px;
+  font-size: 9px;
+  opacity: 0.7;
+}
