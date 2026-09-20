@@ -39,7 +39,15 @@ let grid = [];
 let teams = {};
 let players = {};
 let bullets = [];
+let pickups = {}; // id -> {id,x,y,type}
 let gameOver = null;
+
+const ITEM_LABELS = {
+  paint5: { text: '5x5', color: '#a3e635' },
+  paint10: { text: '10x10', color: '#22d3ee' },
+  paint30: { text: '30x30', color: '#f59e0b' },
+  aoeDamage20: { text: 'HASAR', color: '#dc2626' }
+};
 
 const keys = { up: false, down: false, left: false, right: false };
 let aimAngle = 0;
@@ -54,7 +62,10 @@ socket.on('init', (data) => {
   gameOver = data.gameOver;
   players = {};
   data.players.forEach(p => players[p.id] = p);
+  pickups = {};
+  data.pickups.forEach(p => pickups[p.id] = p);
   updateTeamInfo();
+  if (players[myId]) updateInventoryUI(players[myId].inventory);
   if (gameOver) showGameOver(gameOver);
 });
 
@@ -65,11 +76,31 @@ socket.on('fullState', (data) => {
   gameOver = data.gameOver;
   players = {};
   data.players.forEach(p => players[p.id] = p);
+  pickups = {};
+  data.pickups.forEach(p => pickups[p.id] = p);
   hideGameOver();
+});
+
+socket.on('pickupSpawned', (pk) => { pickups[pk.id] = pk; });
+socket.on('pickupTaken', (data) => {
+  delete pickups[data.id];
+  if (data.by === myId) {
+    updateInventoryUI(data.inventory);
+    flashSlot(data.slot);
+  }
+});
+socket.on('itemUsed', (data) => {
+  if (data.by === myId) updateInventoryUI(data.inventory);
 });
 
 socket.on('cellUpdate', ({ x, y, team }) => {
   if (grid[y]) grid[y][x] = team;
+});
+
+socket.on('cellsUpdate', (cells) => {
+  cells.forEach(({ x, y, team }) => {
+    if (grid[y]) grid[y][x] = team;
+  });
 });
 
 socket.on('playerJoined', (p) => { players[p.id] = p; });
@@ -116,6 +147,33 @@ function updateTeamInfo() {
   }
 }
 
+// ----------------- ENVANTER ARAYUZU -----------------
+function updateInventoryUI(inventory) {
+  for (let i = 1; i <= 3; i++) {
+    const el = document.getElementById('slot' + i);
+    const type = inventory[i];
+    const label = el.querySelector('.slotLabel');
+    if (type && ITEM_LABELS[type]) {
+      el.classList.remove('empty');
+      el.classList.add('filled');
+      label.textContent = ITEM_LABELS[type].text;
+      el.style.borderColor = ITEM_LABELS[type].color;
+    } else {
+      el.classList.add('empty');
+      el.classList.remove('filled');
+      label.textContent = '-';
+      el.style.borderColor = '';
+    }
+  }
+}
+
+function flashSlot(index) {
+  const el = document.getElementById('slot' + index);
+  if (!el) return;
+  el.classList.add('used-flash');
+  setTimeout(() => el.classList.remove('used-flash'), 150);
+}
+
 // ----------------- INPUT -----------------
 window.addEventListener('keydown', (e) => {
   handleKey(e.code, true);
@@ -131,6 +189,13 @@ function handleKey(code, isDown) {
   else if (code === 'KeyD') keys.right = isDown;
   else changed = false;
   if (changed) sendInput();
+
+  // sayi tuslariyla envanter kullanimi (sadece basildigi anda, birakildiginda degil)
+  if (isDown) {
+    if (code === 'Digit2') socket.emit('useItem', { slot: 1 });
+    else if (code === 'Digit3') socket.emit('useItem', { slot: 2 });
+    else if (code === 'Digit4') socket.emit('useItem', { slot: 3 });
+  }
 }
 
 canvas.addEventListener('mousemove', (e) => {
@@ -174,12 +239,10 @@ function updateRenderPositions(dt) {
     const p = players[id];
     if (!renderPos[id]) renderPos[id] = { x: p.x, y: p.y };
     const rp = renderPos[id];
-    // dt'den bagimsiz, kare hizina gore dogru calisan yumusatma
     const smoothing = 1 - Math.pow(0.00002, dt);
     rp.x += (p.x - rp.x) * smoothing;
     rp.y += (p.y - rp.y) * smoothing;
   }
-  // ayrilan oyuncularin render pozisyonunu temizle
   for (const id in renderPos) {
     if (!players[id]) delete renderPos[id];
   }
@@ -202,7 +265,7 @@ function draw() {
   const now = performance.now();
   let dt = (now - lastFrameTime) / 1000;
   lastFrameTime = now;
-  dt = Math.min(dt, 0.1); // sekme arka plandaysa dev sicramayi engelle
+  dt = Math.min(dt, 0.1);
 
   updateRenderPositions(dt);
 
@@ -261,9 +324,11 @@ function drawEntities() {
     entities.push({ type: 'player', data: p, depth: rp.x + rp.y });
   });
   bullets.forEach(b => entities.push({ type: 'bullet', data: b, depth: b.x + b.y }));
+  Object.values(pickups).forEach(pk => entities.push({ type: 'pickup', data: pk, depth: pk.x + pk.y }));
   entities.sort((a, b) => a.depth - b.depth);
   entities.forEach(e => {
     if (e.type === 'player') drawPlayer(e.data);
+    else if (e.type === 'pickup') drawPickup(e.data);
     else drawBullet(e.data);
   });
 }
@@ -274,13 +339,11 @@ function drawPlayer(p) {
   const pos = gridToScreen(rp.x, rp.y);
   const color = teams[p.team] ? teams[p.team].color : '#fff';
 
-  // golge
   ctx.beginPath();
   ctx.ellipse(pos.x, pos.y + 4, 12, 6, 0, 0, Math.PI * 2);
   ctx.fillStyle = 'rgba(0,0,0,0.35)';
   ctx.fill();
 
-  // govde
   ctx.beginPath();
   ctx.arc(pos.x, pos.y - 10, 12, 0, Math.PI * 2);
   ctx.fillStyle = color;
@@ -289,7 +352,6 @@ function drawPlayer(p) {
   ctx.lineWidth = 2;
   ctx.stroke();
 
-  // nisan yonu
   const dirX = Math.cos(p.aimAngle);
   const dirY = Math.sin(p.aimAngle);
   const dirScreen = gridToScreen(rp.x + dirX * 0.6, rp.y + dirY * 0.6);
@@ -300,7 +362,6 @@ function drawPlayer(p) {
   ctx.lineWidth = 3;
   ctx.stroke();
 
-  // can bari (rakipler icin de gorunsun)
   const hpPct = Math.max(0, p.health) / 100;
   ctx.fillStyle = 'rgba(0,0,0,0.5)';
   ctx.fillRect(pos.x - 16, pos.y - 32, 32, 5);
@@ -324,6 +385,33 @@ function drawBullet(b) {
   ctx.strokeStyle = '#fff';
   ctx.lineWidth = 1;
   ctx.stroke();
+}
+
+function drawPickup(pk) {
+  const pos = gridToScreen(pk.x + 0.5, pk.y + 0.5);
+  const info = ITEM_LABELS[pk.type] || { text: '?', color: '#fff' };
+  const bobOffset = Math.sin(Date.now() / 300 + pk.id) * 3;
+
+  ctx.beginPath();
+  ctx.ellipse(pos.x, pos.y + 4, 14, 6, 0, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  ctx.fill();
+
+  const boxY = pos.y - 16 + bobOffset;
+  ctx.save();
+  ctx.translate(pos.x, boxY);
+  ctx.rotate(Math.PI / 4);
+  ctx.fillStyle = info.color;
+  ctx.fillRect(-11, -11, 22, 22);
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(-11, -11, 22, 22);
+  ctx.restore();
+
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 9px Arial';
+  ctx.textAlign = 'center';
+  ctx.fillText(info.text, pos.x, boxY - 20);
 }
 
 draw();
