@@ -49,6 +49,57 @@ const ITEM_LABELS = {
   aoeDamage20: { text: 'HASAR', color: '#dc2626' }
 };
 
+// ----------------- KARAKTER SPRITE'LARI -----------------
+// Dosyalari public/sprites/idle/ klasorune ORIJINAL isimleriyle koy
+// (orn. North_0001.png, South-West_0003.png). Buyuk/kucuk harf onemli!
+const SPRITE_BASE_PATH = 'sprites/idle/';
+const DIRECTIONS = [
+  { key: 'north',     file: 'North' },      // aimAngle ~ -135 derece
+  { key: 'northeast', file: 'North-East' }, // aimAngle ~ -90 derece
+  { key: 'east',       file: 'East' },       // aimAngle ~ -45 derece
+  { key: 'southeast', file: 'South-East' }, // aimAngle ~ 0 derece
+  { key: 'south',      file: 'South' },      // aimAngle ~ 45 derece
+  { key: 'southwest', file: 'South-West' }, // aimAngle ~ 90 derece
+  { key: 'west',        file: 'West' },        // aimAngle ~ 135 derece
+  { key: 'northwest', file: 'North-West' }  // aimAngle ~ 180 derece
+];
+const FRAMES_PER_DIRECTION = 6;
+const ANIMATION_FPS = 8;
+const SPRITE_TARGET_HEIGHT = 56; // ekranda gorunecek yukseklik (px), oran korunur
+
+let spriteFrames = {}; // key -> [Image,...]
+
+function loadSprites() {
+  DIRECTIONS.forEach(dir => {
+    spriteFrames[dir.key] = [];
+    for (let i = 1; i <= FRAMES_PER_DIRECTION; i++) {
+      const frameNum = String(i).padStart(4, '0');
+      const img = new Image();
+      img.src = `${SPRITE_BASE_PATH}${dir.file}_${frameNum}.png`;
+      spriteFrames[dir.key].push(img);
+    }
+  });
+}
+loadSprites();
+
+// grid-space aimAngle'i (radyan) 8 ekran yonunden en yakinina cevirir
+function angleToDirectionKey(angleRad) {
+  const deg = angleRad * 180 / Math.PI;
+  let idx = Math.round((deg + 135) / 45);
+  idx = ((idx % 8) + 8) % 8;
+  return DIRECTIONS[idx].key;
+}
+
+// suanki animasyon karesini dondurur, sprite yuklenmemisse/bulunamamissa null doner
+function getCurrentSpriteFrame(dirKey) {
+  const frames = spriteFrames[dirKey];
+  if (!frames || frames.length === 0) return null;
+  const frameIndex = Math.floor(Date.now() / (1000 / ANIMATION_FPS)) % frames.length;
+  const img = frames[frameIndex];
+  if (img.complete && img.naturalWidth > 0) return img;
+  return null;
+}
+
 const keys = { up: false, down: false, left: false, right: false };
 let aimAngle = 0;
 let mouseScreen = { x: 0, y: 0 };
@@ -229,9 +280,6 @@ function sendInput() {
 setInterval(sendInput, 50); // input degismese bile aim guncel kalsin
 
 // ----------------- YUMUSAK GECIS (INTERPOLATION) -----------------
-// Sunucu pozisyonu saniyede ~20 kez gonderiyor ama ekran cok daha sik ciziliyor.
-// Bu yuzden dogrudan sunucu pozisyonuna zoplamak yerine, her karede hedefe
-// dogru yumusakca kayarak "cit" hissini ortadan kaldiriyoruz.
 let renderPos = {}; // id -> {x, y}
 
 function updateRenderPositions(dt) {
@@ -339,40 +387,45 @@ function drawPlayer(p) {
   const pos = gridToScreen(rp.x, rp.y);
   const color = teams[p.team] ? teams[p.team].color : '#fff';
 
+  // golge
   ctx.beginPath();
   ctx.ellipse(pos.x, pos.y + 4, 12, 6, 0, 0, Math.PI * 2);
   ctx.fillStyle = 'rgba(0,0,0,0.35)';
   ctx.fill();
 
-  ctx.beginPath();
-  ctx.arc(pos.x, pos.y - 10, 12, 0, Math.PI * 2);
-  ctx.fillStyle = color;
-  ctx.fill();
-  ctx.strokeStyle = '#fff';
-  ctx.lineWidth = 2;
-  ctx.stroke();
+  const dirKey = angleToDirectionKey(p.aimAngle);
+  const spriteImg = getCurrentSpriteFrame(dirKey);
+  let spriteTopY = pos.y - 22; // fallback yukseklik referansi (daire icin)
 
-  const dirX = Math.cos(p.aimAngle);
-  const dirY = Math.sin(p.aimAngle);
-  const dirScreen = gridToScreen(rp.x + dirX * 0.6, rp.y + dirY * 0.6);
-  ctx.beginPath();
-  ctx.moveTo(pos.x, pos.y - 10);
-  ctx.lineTo(dirScreen.x, dirScreen.y - 10);
-  ctx.strokeStyle = '#fff';
-  ctx.lineWidth = 3;
-  ctx.stroke();
+  if (spriteImg) {
+    const scale = SPRITE_TARGET_HEIGHT / spriteImg.naturalHeight;
+    const drawW = spriteImg.naturalWidth * scale;
+    const drawH = spriteImg.naturalHeight * scale;
+    spriteTopY = pos.y - drawH + 6;
+    ctx.drawImage(spriteImg, pos.x - drawW / 2, spriteTopY, drawW, drawH);
+  } else {
+    // sprite henuz yuklenmediyse / dosya bulunamadiysa eski renkli daireyle goster
+    ctx.beginPath();
+    ctx.arc(pos.x, pos.y - 10, 12, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
 
+  // can bari (rakipler icin de gorunsun)
   const hpPct = Math.max(0, p.health) / 100;
   ctx.fillStyle = 'rgba(0,0,0,0.5)';
-  ctx.fillRect(pos.x - 16, pos.y - 32, 32, 5);
+  ctx.fillRect(pos.x - 16, spriteTopY - 10, 32, 5);
   ctx.fillStyle = hpPct > 0.5 ? '#22c55e' : hpPct > 0.2 ? '#eab308' : '#ef4444';
-  ctx.fillRect(pos.x - 16, pos.y - 32, 32 * hpPct, 5);
+  ctx.fillRect(pos.x - 16, spriteTopY - 10, 32 * hpPct, 5);
 
   if (p.id === myId) {
     ctx.fillStyle = '#fff';
     ctx.font = '11px Arial';
     ctx.textAlign = 'center';
-    ctx.fillText('SEN', pos.x, pos.y - 38);
+    ctx.fillText('SEN', pos.x, spriteTopY - 16);
   }
 }
 
