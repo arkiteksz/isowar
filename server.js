@@ -25,6 +25,29 @@ const BULLET_LIFETIME = 1.2;   // saniye
 const SHOOT_COOLDOWN = 0.35;   // saniye
 const WIN_PERCENT = 0.70;
 
+// ----------------- OZEL ESYALAR -----------------
+const ITEM_TYPES = {
+  paint5:      { size: 5,  kind: 'paint',  weight: 40 },
+  paint10:     { size: 10, kind: 'paint',  weight: 28 },
+  paint30:     { size: 30, kind: 'paint',  weight: 10 },
+  aoeDamage20: { size: 20, kind: 'damage', damage: 50, weight: 22 }
+};
+const ITEM_TYPE_LIST = Object.entries(ITEM_TYPES).map(([type, cfg]) => ({ type, ...cfg }));
+const TOTAL_ITEM_WEIGHT = ITEM_TYPE_LIST.reduce((sum, it) => sum + it.weight, 0);
+const MAX_PICKUPS = 15;
+const PICKUP_PICKUP_RADIUS = 0.6;
+const PICKUP_MIN_INTERVAL_MS = 3000;
+const PICKUP_MAX_INTERVAL_MS = 8000;
+
+function pickRandomItemType() {
+  let r = Math.random() * TOTAL_ITEM_WEIGHT;
+  for (const it of ITEM_TYPE_LIST) {
+    if (r < it.weight) return it.type;
+    r -= it.weight;
+  }
+  return ITEM_TYPE_LIST[0].type;
+}
+
 const TEAMS = {
   blue: { id: 'blue', color: '#3b82f6', spawn: { x: 3, y: 3 } },
   red:  { id: 'red',  color: '#ef4444', spawn: { x: GRID_SIZE - 4, y: GRID_SIZE - 4 } }
@@ -41,6 +64,37 @@ let players = {}; // socketId -> player
 let bullets = []; // {id,x,y,vx,vy,team,ownerId,life}
 let bulletIdCounter = 0;
 let gameOver = null; // {winner} | null
+
+let pickups = {}; // id -> {id,x,y,type}
+let pickupIdCounter = 0;
+
+function trySpawnPickup() {
+  if (Object.keys(pickups).length >= MAX_PICKUPS) return;
+  let attempts = 0;
+  while (attempts < 20) {
+    attempts++;
+    const x = Math.floor(Math.random() * (GRID_SIZE - 4)) + 2;
+    const y = Math.floor(Math.random() * (GRID_SIZE - 4)) + 2;
+    const occupied = Object.values(pickups).some(p => p.x === x && p.y === y);
+    if (!occupied) {
+      pickupIdCounter++;
+      const type = pickRandomItemType();
+      const pickup = { id: pickupIdCounter, x, y, type };
+      pickups[pickup.id] = pickup;
+      io.emit('pickupSpawned', pickup);
+      return;
+    }
+  }
+}
+
+function scheduleNextPickupSpawn() {
+  const delay = PICKUP_MIN_INTERVAL_MS + Math.random() * (PICKUP_MAX_INTERVAL_MS - PICKUP_MIN_INTERVAL_MS);
+  setTimeout(() => {
+    trySpawnPickup();
+    scheduleNextPickupSpawn();
+  }, delay);
+}
+scheduleNextPickupSpawn();
 
 function teamCounts() {
   return Object.values(players).reduce((acc, p) => {
@@ -69,7 +123,8 @@ function spawnPlayer(socketId, name) {
     aimAngle: 0,
     input: { up: false, down: false, left: false, right: false },
     lastShot: 0,
-    alive: true
+    alive: true,
+    inventory: ['default', null, null, null] // 0. slot sabit varsayilan silah
   };
   return players[socketId];
 }
@@ -90,6 +145,56 @@ function paintCellUnder(p) {
     grid[cy][cx] = p.team;
     io.emit('cellUpdate', { x: cx, y: cy, team: p.team });
   }
+}
+
+function paintArea(p, size) {
+  const cx = Math.floor(p.x);
+  const cy = Math.floor(p.y);
+  const half = Math.floor(size / 2);
+  const startX = cx - half;
+  const endX = startX + size - 1;
+  const startY = cy - half;
+  const endY = startY + size - 1;
+  const changed = [];
+  for (let yy = startY; yy <= endY; yy++) {
+    for (let xx = startX; xx <= endX; xx++) {
+      if (xx < 0 || yy < 0 || xx >= GRID_SIZE || yy >= GRID_SIZE) continue;
+      if (grid[yy][xx] !== p.team) {
+        grid[yy][xx] = p.team;
+        changed.push({ x: xx, y: yy, team: p.team });
+      }
+    }
+  }
+  if (changed.length) io.emit('cellsUpdate', changed);
+}
+
+function damageArea(p, size, damage) {
+  const cx = Math.floor(p.x);
+  const cy = Math.floor(p.y);
+  const half = size / 2;
+  for (const other of Object.values(players)) {
+    if (!other.alive || other.team === p.team) continue;
+    if (Math.abs(other.x - (cx + 0.5)) <= half && Math.abs(other.y - (cy + 0.5)) <= half) {
+      other.health -= damage;
+      if (other.health <= 0) {
+        other.alive = false;
+        io.emit('playerKilled', { id: other.id, by: p.id });
+        setTimeout(() => {
+          if (players[other.id]) {
+            respawnPlayer(players[other.id]);
+            io.emit('playerRespawn', publicPlayer(players[other.id]));
+          }
+        }, 1500);
+      }
+    }
+  }
+}
+
+function applyItemEffect(p, type) {
+  const info = ITEM_TYPES[type];
+  if (!info) return;
+  if (info.kind === 'paint') paintArea(p, info.size);
+  else if (info.kind === 'damage') damageArea(p, info.size, info.damage);
 }
 
 function checkWinCondition() {
@@ -114,7 +219,11 @@ function resetMatch() {
   resetGrid();
   gameOver = null;
   bullets = [];
-  Object.values(players).forEach(respawnPlayer);
+  pickups = {};
+  Object.values(players).forEach(p => {
+    respawnPlayer(p);
+    p.inventory = ['default', null, null, null];
+  });
   io.emit('fullState', buildFullState());
 }
 
@@ -124,6 +233,7 @@ function buildFullState() {
     grid,
     teams: TEAMS,
     players: Object.values(players).map(publicPlayer),
+    pickups: Object.values(pickups),
     gameOver
   };
 }
@@ -137,7 +247,8 @@ function publicPlayer(p) {
     y: p.y,
     health: p.health,
     aimAngle: p.aimAngle,
-    alive: p.alive
+    alive: p.alive,
+    inventory: p.inventory
   };
 }
 
@@ -179,6 +290,18 @@ io.on('connection', (socket) => {
     if (gameOver) resetMatch();
   });
 
+  socket.on('useItem', (data) => {
+    const p = players[socket.id];
+    if (!p || !p.alive || gameOver) return;
+    const slotIndex = data && data.slot;
+    if (!Number.isInteger(slotIndex) || slotIndex < 1 || slotIndex > 3) return;
+    const type = p.inventory[slotIndex];
+    if (!type) return;
+    applyItemEffect(p, type);
+    p.inventory[slotIndex] = null;
+    io.emit('itemUsed', { by: p.id, slot: slotIndex, type, inventory: p.inventory });
+  });
+
   socket.on('disconnect', () => {
     delete players[socket.id];
     io.emit('playerLeft', socket.id);
@@ -198,7 +321,6 @@ setInterval(() => {
       if (!p.alive) continue;
       // NOT: bu bir isometric oyun, bu yuzden WASD'yi grid eksenine gore degil
       // EKRANDA gorunen yone gore hesapliyoruz (W = ekranda yukari, D = ekranda sag, vb.)
-      // Iso projeksiyonun tersini alarak ekran yonlerini grid vektorune ceviriyoruz.
       let dx = 0, dy = 0;
       if (p.input.up)    { dx -= 1; dy -= 1; } // ekranda yukari
       if (p.input.down)  { dx += 1; dy += 1; } // ekranda asagi
@@ -247,6 +369,24 @@ setInterval(() => {
       }
     }
     bullets = remainingBullets;
+
+    // pickup toplama
+    for (const p of Object.values(players)) {
+      if (!p.alive) continue;
+      for (const pk of Object.values(pickups)) {
+        const ddx = p.x - (pk.x + 0.5);
+        const ddy = p.y - (pk.y + 0.5);
+        if (Math.sqrt(ddx * ddx + ddy * ddy) < PICKUP_PICKUP_RADIUS) {
+          const emptyIndex = p.inventory.findIndex((slot, idx) => idx > 0 && slot === null);
+          if (emptyIndex !== -1) {
+            p.inventory[emptyIndex] = pk.type;
+            delete pickups[pk.id];
+            io.emit('pickupTaken', { id: pk.id, by: p.id, slot: emptyIndex, type: pk.type, inventory: p.inventory });
+          }
+          // slotlar doluysa esya yerde kalir, oyuncu bosluk acinca alabilir
+        }
+      }
+    }
 
     checkWinCondition();
   }
